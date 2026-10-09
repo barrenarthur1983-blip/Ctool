@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Contractor Measure & Estimate — v0.5</title>
+<style>
+body{font-family:Arial,sans-serif;margin:0;background:#f3f4f6;color:#17202a}
+header{background:#17202a;color:white;padding:16px}
+header h1{margin:0;font-size:22px} header small{opacity:.75}
+main{max-width:1050px;margin:auto;padding:16px}
+.card{background:white;border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 2px 8px #0001}
+button{border:0;border-radius:8px;padding:10px 14px;cursor:pointer;font-weight:600}
+.primary{background:#1769aa;color:white}.danger{background:#b42318;color:white}.muted{background:#e8eaed}
+input,textarea,select{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccd2d8;border-radius:7px;margin-top:5px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.hidden{display:none}.job{border:1px solid #ddd;border-radius:9px;padding:12px;margin:8px 0}
+.job strong{display:block}.job span{font-size:13px;color:#667085}
+.measure-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin:8px 0}
+.total{font-size:20px;font-weight:700}
+.notice{padding:10px;border-radius:8px;background:#eef6ff;margin-bottom:12px}
+@media(max-width:600px){.measure-row{grid-template-columns:1fr 1fr}.measure-row button{grid-column:1/-1}}
+</style>
+</head>
+<body>
+<header><h1>Contractor Measure & Estimate</h1><small>Version 0.5 — Saved Jobs</small></header>
+<main>
+<div id="home">
+  <div class="card">
+    <div class="row"><h2 style="margin-right:auto">My Jobs</h2><button class="primary" onclick="newJob()">+ New Job</button></div>
+    <div id="jobs"></div>
+  </div>
+</div>
+
+<div id="editor" class="hidden">
+  <div class="card">
+    <div class="row"><button class="muted" onclick="showHome()">← Jobs</button><h2 style="margin-right:auto" id="editorTitle">New Job</h2><button class="primary" onclick="saveJob()">Save Job</button></div>
+    <div id="status"></div>
+    <div class="grid">
+      <label>Job name<input id="jobName" placeholder="Smith Kitchen, Johnson Deck"></label>
+      <label>Customer<input id="customer" placeholder="Customer name"></label>
+      <label>Phone<input id="phone" placeholder="Phone"></label>
+      <label>Address<input id="address" placeholder="Job address"></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Measurements</h2>
+    <p>Enter length × width. Area is calculated automatically. Manual measurement remains the v0.5 method.</p>
+    <div id="measurements"></div>
+    <button class="muted" onclick="addMeasurement()">+ Add Measurement</button>
+    <p>Total measured area: <span class="total" id="areaTotal">0.00</span> sq ft</p>
+  </div>
+
+  <div class="card">
+    <h2>Estimate</h2>
+    <div class="grid">
+      <label>Labor rate ($/sq ft)<input id="laborRate" type="number" step=".01" value="0"></label>
+      <label>Materials ($)<input id="materials" type="number" step=".01" value="0"></label>
+      <label>Other costs ($)<input id="other" type="number" step=".01" value="0"></label>
+      <label>Markup (%)<input id="markup" type="number" step=".1" value="0"></label>
+    </div>
+    <hr>
+    <div>Labor: $<span id="laborTotal">0.00</span></div>
+    <div>Subtotal: $<span id="subtotal">0.00</span></div>
+    <div>Markup: $<span id="markupTotal">0.00</span></div>
+    <p>Estimated price: <span class="total">$<span id="grandTotal">0.00</span></span></p>
+  </div>
+
+  <div class="card">
+    <label>Notes<textarea id="notes" rows="4" placeholder="Scope, exclusions, customer notes..."></textarea></label>
+    <div class="row" style="margin-top:12px"><button class="primary" onclick="saveJob()">Save Changes</button><button class="danger" onclick="deleteCurrent()">Delete Job</button></div>
+  </div>
+</div>
+</main>
+<script>
+const KEY="contractor_measure_estimate_jobs_v05";
+let jobs=JSON.parse(localStorage.getItem(KEY)||"[]"), current=null;
+
+function persist(){localStorage.setItem(KEY,JSON.stringify(jobs))}
+function money(n){return Number(n||0).toFixed(2)}
+function showHome(){current=null;document.getElementById("editor").classList.add("hidden");document.getElementById("home").classList.remove("hidden");renderJobs()}
+function newJob(){
+ current={id:crypto.randomUUID(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
+  name:"",customer:"",phone:"",address:"",notes:"",measurements:[{name:"Area 1",length:0,width:0}],laborRate:0,materials:0,other:0,markup:0};
+ openEditor();
+}
+function openJob(id){current=jobs.find(j=>j.id===id);openEditor()}
+function openEditor(){
+ document.getElementById("home").classList.add("hidden");document.getElementById("editor").classList.remove("hidden");
+ document.getElementById("editorTitle").textContent=current.name||"New Job";
+ ["jobName","customer","phone","address","notes"].forEach((id,i)=>document.getElementById(id).value=[current.name,current.customer,current.phone,current.address,current.notes][i]||"");
+ ["laborRate","materials","other","markup"].forEach(id=>document.getElementById(id).value=current[id]||0);
+ renderMeasurements();calc();
+}
+function renderJobs(){
+ const box=document.getElementById("jobs");
+ if(!jobs.length){box.innerHTML='<p>No saved jobs yet. Create your first job.</p>';return}
+ box.innerHTML=jobs.sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt)).map(j=>
+ `<div class="job"><strong>${esc(j.name||"Untitled Job")}</strong><span>${esc(j.customer||"No customer")} • ${money(area(j))} sq ft • $${money(total(j))}</span>
+ <div class="row" style="margin-top:8px"><button class="primary" onclick="openJob('${j.id}')">Open / Edit</button><button class="danger" onclick="deleteJob('${j.id}')">Delete</button></div></div>`).join("");
+}
+function addMeasurement(){current.measurements.push({name:"Area "+(current.measurements.length+1),length:0,width:0});renderMeasurements();calc()}
+function renderMeasurements(){
+ const box=document.getElementById("measurements");
+ box.innerHTML=current.measurements.map((m,i)=>`<div class="measure-row">
+ <input placeholder="Area name" value="${esc(m.name)}" oninput="mname(${i},this.value)">
+ <input type="number" step=".01" placeholder="Length" value="${m.length||""}" oninput="mval(${i},'length',this.value)">
+ <input type="number" step=".01" placeholder="Width" value="${m.width||""}" oninput="mval(${i},'width',this.value)">
+ <button class="danger" onclick="removeMeasurement(${i})">Remove</button></div>`).join("");
+}
+function mname(i,v){current.measurements[i].name=v}
+function mval(i,k,v){current.measurements[i][k]=Number(v)||0;calc()}
+function removeMeasurement(i){if(current.measurements.length>1){current.measurements.splice(i,1);renderMeasurements();calc()}}
+function area(j){return (j.measurements||[]).reduce((s,m)=>s+(Number(m.length)||0)*(Number(m.width)||0),0)}
+function total(j){let a=area(j), labor=a*(Number(j.laborRate)||0), sub=labor+(Number(j.materials)||0)+(Number(j.other)||0);return sub*(1+(Number(j.markup)||0)/100)}
+function calc(){
+ let a=area(current), labor=a*(Number(document.getElementById("laborRate").value)||0);
+ let sub=labor+(Number(document.getElementById("materials").value)||0)+(Number(document.getElementById("other").value)||0);
+ let mk=sub*(Number(document.getElementById("markup").value)||0)/100;
+ document.getElementById("areaTotal").textContent=money(a);document.getElementById("laborTotal").textContent=money(labor);
+ document.getElementById("subtotal").textContent=money(sub);document.getElementById("markupTotal").textContent=money(mk);document.getElementById("grandTotal").textContent=money(sub+mk);
+}
+["laborRate","materials","other","markup"].forEach(id=>document.getElementById(id).addEventListener("input",calc));
+function collect(){
+ current.name=document.getElementById("jobName").value.trim();current.customer=document.getElementById("customer").value.trim();
+ current.phone=document.getElementById("phone").value.trim();current.address=document.getElementById("address").value.trim();current.notes=document.getElementById("notes").value;
+ ["laborRate","materials","other","markup"].forEach(id=>current[id]=Number(document.getElementById(id).value)||0);
+ current.updatedAt=new Date().toISOString();
+}
+function saveJob(){
+ collect();if(!current.name)current.name="Untitled Job";
+ const idx=jobs.findIndex(j=>j.id===current.id);if(idx<0)jobs.push(current);else jobs[idx]=current;
+ persist();document.getElementById("status").innerHTML='<div class="notice">Job saved successfully.</div>';document.getElementById("editorTitle").textContent=current.name;
+}
+function deleteCurrent(){if(confirm("Delete this job? This cannot be undone.")){deleteJob(current.id);showHome()}}
+function deleteJob(id){if(confirm("Delete this saved job?")){jobs=jobs.filter(j=>j.id!==id);persist();renderJobs()}}
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+renderJobs();
+</script>
+</body></html>
